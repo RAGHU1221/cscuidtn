@@ -36,6 +36,55 @@ class MainActivity : AppCompatActivity() {
             fileUploadCallback = null
         }
 
+    // --- Native voice recognition (Google speech) for Voice Search / Buddy ---
+    private val speechLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val alternatives = result.data
+                ?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)
+            if (result.resultCode == RESULT_OK && !alternatives.isNullOrEmpty()) {
+                val json = org.json.JSONArray(alternatives.toList()).toString()
+                webView.evaluateJavascript(
+                    "window.__androidVoiceResult && window.__androidVoiceResult(" +
+                        org.json.JSONObject.quote(json) + ");",
+                    null
+                )
+            } else {
+                webView.evaluateJavascript(
+                    "window.__androidVoiceError && window.__androidVoiceError();",
+                    null
+                )
+            }
+        }
+
+    inner class VoiceBridge {
+        @JavascriptInterface
+        fun startListening(lang: String) {
+            runOnUiThread {
+                try {
+                    val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(
+                            android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                        )
+                        putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, lang)
+                        putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                        putExtra(
+                            android.speech.RecognizerIntent.EXTRA_PROMPT,
+                            if (lang.startsWith("ta")) "பேசுங்கள்..." else "Speak now..."
+                        )
+                    }
+                    speechLauncher.launch(intent)
+                } catch (_: Exception) {
+                    // Google app / speech service not available on this device
+                    webView.evaluateJavascript(
+                        "window.__androidVoiceError && window.__androidVoiceError();",
+                        null
+                    )
+                }
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,6 +109,9 @@ class MainActivity : AppCompatActivity() {
         }
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+
+        // Expose native voice recognition to the site's voice_recognition.js
+        webView.addJavascriptInterface(VoiceBridge(), "AndroidVoice")
 
         // --- Navigation control ---
         webView.webViewClient = object : WebViewClient() {
