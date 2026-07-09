@@ -3,6 +3,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Some OEMs check this to list a mic in the Play Store listing; harmless if absent on device -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!-- For file downloads (Excel/PDF exports) on Android 9 and below -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
