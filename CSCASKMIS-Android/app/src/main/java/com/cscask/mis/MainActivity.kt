@@ -56,30 +56,65 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    // Runtime mic permission (Android 6+). Must be granted before launching the
+    // speech recognizer intent, or the system dialog silently fails.
+    private var pendingVoiceLang: String? = null
+    private val micPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val lang = pendingVoiceLang
+            pendingVoiceLang = null
+            if (granted && lang != null) {
+                launchSpeechIntent(lang)
+            } else if (lang != null) {
+                // Only show the "voice search needs mic" feedback if the user
+                // was actually mid-voice-search when they denied permission.
+                webView.evaluateJavascript(
+                    "window.__androidVoiceError && window.__androidVoiceError();",
+                    null
+                )
+                Toast.makeText(this, "Microphone permission needed for voice search", Toast.LENGTH_SHORT).show()
+            }
+            // else: this was just the upfront app-launch permission prompt; stay silent either way
+        }
+
+    private fun launchSpeechIntent(lang: String) {
+        try {
+            val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(
+                    android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                )
+                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, lang)
+                putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                putExtra(
+                    android.speech.RecognizerIntent.EXTRA_PROMPT,
+                    if (lang.startsWith("ta")) "பேசுங்கள்..." else "Speak now..."
+                )
+            }
+            speechLauncher.launch(intent)
+        } catch (_: Exception) {
+            // Google app / speech service not available on this device
+            webView.evaluateJavascript(
+                "window.__androidVoiceError && window.__androidVoiceError();",
+                null
+            )
+            Toast.makeText(this, "Voice search needs the Google app installed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     inner class VoiceBridge {
         @JavascriptInterface
         fun startListening(lang: String) {
             runOnUiThread {
-                try {
-                    val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                        putExtra(
-                            android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-                        )
-                        putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, lang)
-                        putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-                        putExtra(
-                            android.speech.RecognizerIntent.EXTRA_PROMPT,
-                            if (lang.startsWith("ta")) "பேசுங்கள்..." else "Speak now..."
-                        )
-                    }
-                    speechLauncher.launch(intent)
-                } catch (_: Exception) {
-                    // Google app / speech service not available on this device
-                    webView.evaluateJavascript(
-                        "window.__androidVoiceError && window.__androidVoiceError();",
-                        null
-                    )
+                val hasMicPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                    this@MainActivity, android.Manifest.permission.RECORD_AUDIO
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                if (hasMicPermission) {
+                    launchSpeechIntent(lang)
+                } else {
+                    pendingVoiceLang = lang
+                    micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                 }
             }
         }
@@ -170,6 +205,24 @@ class MainActivity : AppCompatActivity() {
                     false
                 }
             }
+
+            // Grant mic access to the WebView itself, in case the page ever uses
+            // the browser's own Web Speech API instead of the AndroidVoice bridge.
+            override fun onPermissionRequest(request: PermissionRequest) {
+                runOnUiThread {
+                    val wantsAudio = request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                    val originOk = request.origin.toString().contains(HOST)
+                    if (wantsAudio && originOk &&
+                        androidx.core.content.ContextCompat.checkSelfPermission(
+                            this@MainActivity, android.Manifest.permission.RECORD_AUDIO
+                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                    } else {
+                        request.deny()
+                    }
+                }
+            }
         }
 
         // --- File download support (Excel/PDF/HTML exports) ---
@@ -227,6 +280,14 @@ class MainActivity : AppCompatActivity() {
             if (isOnline()) webView.loadUrl(SITE_URL) else showOffline()
         } else {
             webView.restoreState(savedInstanceState)
+        }
+
+        // Ask for mic permission upfront so Voice Search works the first time it's tapped
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.RECORD_AUDIO
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
         }
     }
 
